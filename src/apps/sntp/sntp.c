@@ -62,6 +62,8 @@
 #include <string.h>
 #include <time.h>
 
+void neonious_sntp_set_success(unsigned char success);
+
 #if LWIP_UDP
 
 /* Handle support for more than one server via SNTP_MAX_SERVERS */
@@ -285,6 +287,8 @@ sntp_format_time(s32_t sec)
 static void
 sntp_process(const struct sntp_timestamps *timestamps)
 {
+  neonious_sntp_set_success(true);
+
   s32_t sec;
   u32_t frac;
 
@@ -401,6 +405,8 @@ sntp_try_next_server(void *arg)
 {
   u8_t old_server, i;
   LWIP_UNUSED_ARG(arg);
+
+  neonious_sntp_set_success(false);
 
   old_server = sntp_current_server;
   for (i = 0; i < SNTP_MAX_SERVERS - 1; i++) {

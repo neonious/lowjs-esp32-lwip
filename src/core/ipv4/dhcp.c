@@ -695,7 +695,7 @@ dhcp_handle_ack(struct netif *netif, struct dhcp_msg *msg_in)
     }
 #endif
     ip_addr_set_ip4_u32_val(dns_addr, lwip_htonl(dhcp_get_option_value(dhcp, DHCP_OPTION_IDX_DNS_SERVER + n)));
-    dns_setserver(n, &dns_addr);
+    dns_setserver_dhcp(n, &dns_addr);
   }
 #endif /* LWIP_DHCP_PROVIDE_DNS_SERVERS */
 }

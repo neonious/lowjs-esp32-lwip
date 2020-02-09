@@ -299,6 +299,8 @@ static u8_t                   dns_seqno;
 static struct dns_table_entry dns_table[DNS_TABLE_SIZE];
 static struct dns_req_entry   dns_requests[DNS_MAX_REQUESTS];
 static ip_addr_t              dns_servers[DNS_MAX_SERVERS];
+static ip_addr_t              dns_servers_own[DNS_MAX_SERVERS];
+static ip_addr_t              dns_servers_dhcp[DNS_MAX_SERVERS];
 
 #if LWIP_IPV4
 const ip_addr_t dns_mquery_v4group = DNS_MQUERY_IPV4_GROUP_INIT;
@@ -374,12 +376,37 @@ void
 dns_setserver(u8_t numdns, const ip_addr_t *dnsserver)
 {
   if (numdns < DNS_MAX_SERVERS) {
+      if (dnsserver != NULL) {
+          dns_servers_own[numdns] = (*dnsserver);
+      } else {
+          dns_servers_own[numdns] = dns_servers_dhcp[numdns];
+      }
     if (dnsserver != NULL) {
       dns_servers[numdns] = (*dnsserver);
     } else {
-      dns_servers[numdns] = *IP_ADDR_ANY;
+      dns_servers[numdns] = dns_servers_dhcp[numdns];
     }
   }
+}
+
+void
+dns_setserver_dhcp(u8_t numdns, const ip_addr_t *dnsserver)
+{
+    if (numdns < DNS_MAX_SERVERS) {
+        if (dnsserver != NULL) {
+            dns_servers_dhcp[numdns] = (*dnsserver);
+        } else {
+            dns_servers_dhcp[numdns] = *IP_ADDR_ANY;
+        }
+
+        if(dns_servers[numdns].u_addr.ip4.addr)
+          return;
+        if (dnsserver != NULL) {
+            dns_servers[numdns] = (*dnsserver);
+        } else {
+            dns_servers[numdns] = *IP_ADDR_ANY;
+        }
+    }
 }
 
 #if ESP_DNS
@@ -411,6 +438,23 @@ dns_getserver(u8_t numdns)
 {
   if (numdns < DNS_MAX_SERVERS) {
     return &dns_servers[numdns];
+  } else {
+    return IP_ADDR_ANY;
+  }
+}
+/**
+ * @ingroup dns
+ * Obtain one of the currently configured DNS server.
+ *
+ * @param numdns the index of the DNS server
+ * @return IP address of the indexed DNS server or "ip_addr_any" if the DNS
+ *         server has not been configured.
+ */
+const ip_addr_t *
+dns_getserver_own(u8_t numdns)
+{
+  if (numdns < DNS_MAX_SERVERS) {
+    return &dns_servers_own[numdns];
   } else {
     return IP_ADDR_ANY;
   }
@@ -1619,7 +1663,6 @@ dns_gethostbyname_addrtype(const char *hostname, ip_addr_t *addr, dns_found_call
     LWIP_DEBUGF(DNS_DEBUG, ("dns_gethostbyname: name too long to resolve"));
     return ERR_ARG;
   }
-
 
 #if LWIP_HAVE_LOOPIF
   if (strcmp(hostname, "localhost") == 0) {

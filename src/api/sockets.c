@@ -683,6 +683,18 @@ lwip_accept(int s, struct sockaddr *addr, socklen_t *addrlen)
   int newsock;
   err_t err;
   int recvevent;
+
+  // TR20190331 check if a socket is available before accepting
+	int i;
+  for(i = 0; i < NUM_SOCKETS; ++i)
+      if(!sockets[i].conn)
+          break;
+  if(i == NUM_SOCKETS)
+  {
+      set_errno(ENFILE);
+      return -1;
+  }
+
   SYS_ARCH_DECL_PROTECT(lev);
 
   LWIP_DEBUGF(SOCKETS_DEBUG, ("lwip_accept(%d)...\n", s));
@@ -2016,6 +2028,8 @@ lwip_select_dec_sockets_used(int maxfdp, fd_set *used_sockets)
 #define lwip_select_dec_sockets_used(maxfdp1, used_sockets)
 #endif /* LWIP_NETCONN_FULLDUPLEX */
 
+char breakSelect = 0;
+
 int
 lwip_select(int maxfdp1, fd_set *readset, fd_set *writeset, fd_set *exceptset,
             struct timeval *timeout)
@@ -2144,7 +2158,7 @@ lwip_select(int maxfdp1, fd_set *readset, fd_set *writeset, fd_set *exceptset,
             }
           }
 
-          waitres = sys_arch_sem_wait(SELECT_SEM_PTR(API_SELECT_CB_VAR_REF(select_cb).sem), msectimeout);
+          waitres = breakSelect ? SYS_ARCH_TIMEOUT : sys_arch_sem_wait(SELECT_SEM_PTR(API_SELECT_CB_VAR_REF(select_cb).sem), msectimeout);
 #if LWIP_NETCONN_SEM_PER_THREAD
           waited = 1;
 #endif
@@ -2218,6 +2232,7 @@ lwip_select(int maxfdp1, fd_set *readset, fd_set *writeset, fd_set *exceptset,
   if (exceptset) {
     *exceptset = lexceptset;
   }
+  breakSelect = 0;
   return nready;
 }
 #endif /* LWIP_SOCKET_SELECT */
@@ -2651,16 +2666,17 @@ static void select_check_waiters(int s, int has_recvevent, int has_sendevent, in
   struct lwip_sock *sock
 #endif /* ESP_LWIP_LOCK */ 
 #if !LWIP_TCPIP_CORE_LOCKING
-  int last_select_cb_ctr;
+  // TR 2018.08.24
+  // This seems to be prone for errors... We could go in select right after
+  // the select again and thus have an endless loop. We only have one select anyhow in
+  // our project at the same time. So remove this multiple tries thing.
+//  int last_select_cb_ctr;
   SYS_ARCH_DECL_PROTECT(lev);
 #endif /* !LWIP_TCPIP_CORE_LOCKING */
 
   LWIP_ASSERT_CORE_LOCKED();
 #if !LWIP_TCPIP_CORE_LOCKING
   SYS_ARCH_PROTECT(lev);
-again:
-  /* remember the state of select_cb_list to detect changes */
-  last_select_cb_ctr = select_cb_ctr;
 #endif /* !LWIP_TCPIP_CORE_LOCKING */
   for (scb = select_cb_list; scb != NULL; scb = scb->next) {
     if (scb->sem_signalled == 0) {
@@ -2717,16 +2733,6 @@ again:
 #if LWIP_TCPIP_CORE_LOCKING
   }
 #else
-    /* unlock interrupts with each step */
-    SYS_ARCH_UNPROTECT(lev);
-    /* this makes sure interrupt protection time is short */
-    SYS_ARCH_PROTECT(lev);
-    if (last_select_cb_ctr != select_cb_ctr) {
-      /* someone has changed select_cb_list, restart at the beginning */
-      goto again;
-    }
-    /* remember the state of select_cb_list to detect changes */
-    last_select_cb_ctr = select_cb_ctr;
   }
   SYS_ARCH_UNPROTECT(lev);
 #endif
@@ -4294,6 +4300,52 @@ lwip_socket_drop_registered_mld6_memberships(int s)
   }
   done_socket(sock);
 }
+
 #endif /* LWIP_IPV6_MLD */
+
+void IRAM_ATTR lowjs_esp32_break_web(bool fromInterrupt)
+{
+    breakSelect = 1;
+
+    struct lwip_select_cb *scb;
+    if(fromInterrupt)
+    {
+        for(scb = select_cb_list; scb != NULL; scb = scb->next)
+            if(scb->sem_signalled == 0)
+            {
+                scb->sem_signalled = 1;
+                if(sys_sem_signal_isr(SELECT_SEM_PTR(scb->sem)))
+                    portYIELD_FROM_ISR();
+            }
+    }
+    else
+    {
+        SYS_ARCH_DECL_PROTECT(lev);
+
+        SYS_ARCH_PROTECT(lev);
+        for(scb = select_cb_list; scb != NULL; scb = scb->next)
+        {
+            /* remember the state of select_cb_list to detect changes */
+            if(scb->sem_signalled == 0)
+            {
+                scb->sem_signalled = 1;
+                /* Don't call SYS_ARCH_UNPROTECT() before signaling the
+                 semaphore, as this might lead to the select thread taking
+                 itself off the list, invalidating the semaphore. */
+                sys_sem_signal(SELECT_SEM_PTR(scb->sem));
+            }
+        }
+        SYS_ARCH_UNPROTECT(lev);
+    }
+}
+
+int stat_get_num_sockets()
+{
+    int count = 0;
+    for(int i = 0; i < NUM_SOCKETS; i++)
+        if(sockets[i].conn)
+            count++;
+    return count;
+}
 
 #endif /* LWIP_SOCKET */

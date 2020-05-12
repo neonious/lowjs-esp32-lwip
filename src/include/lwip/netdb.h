@@ -128,6 +128,9 @@ int lwip_getaddrinfo(const char *nodename,
        const struct addrinfo *hints,
        struct addrinfo **res);
 
+// TR20200512 Required by c-ares, using nop
+inline struct servent *getservbyname(const char *name, const char *proto) { return NULL; }
+
 #if LWIP_COMPAT_SOCKETS
 #if ESP_SOCKET
 #if LWIP_COMPAT_SOCKET_ADDR == 1
